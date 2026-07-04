@@ -7,6 +7,33 @@ wallet (`wallet.db`).
 
 [`zallet init-wallet-encryption`] must be run before this command.
 
+> ## ⚠️ Keep a secure backup of your original `wallet.dat`
+>
+> This migration is **alpha** software and does **not** import every kind of key. In
+> particular, it currently does not migrate Sprout spending keys, legacy `wkey`
+> transparent keys, or the encrypted key records (`ckey`, `csapzkey`, `czkey`, …) that a
+> **passphrase-encrypted** `zcashd` wallet stores. Any such key material is left behind.
+>
+> For any key that is not migrated, your original `wallet.dat` is the **only** copy — it
+> was never written to the Zallet `wallet.db`, so a backup of the Zallet wallet will not
+> protect it. **Do not delete or discard `wallet.dat` after migrating.** If you lose it,
+> any funds controlled by un-migrated keys are **permanently unrecoverable**, even if your
+> Zallet `wallet.db` is intact.
+>
+> You must **also** back up the new Zallet wallet. Its `wallet.db` holds spending keys that
+> **cannot** be recovered from any seed phrase — standalone imported keys, legacy seeds,
+> and migrated transparent keys — so [`zallet export-mnemonic`] is **not** a complete
+> backup. There is currently no backup RPC or command; to back up the Zallet wallet, make a
+> secure copy of **both** the `wallet.db` file *and* the age encryption identity file (the
+> file named by the `keystore.encryption_identity` config option). `wallet.db` is encrypted
+> to that identity and cannot be decrypted without it (plus its passphrase, if the identity
+> is passphrase-encrypted). Losing either file means losing access to every key held only
+> in the Zallet wallet.
+>
+> At the end of a run, Zallet prints a summary of exactly what was imported, skipped, or
+> could not be migrated. Review it, and keep `wallet.dat` until Zallet is stable and you
+> have confirmed every balance is spendable.
+
 Parsing a `zcashd` wallet file requires the `db_dump` utility built for Berkeley DB
 version 6.2 (the version `zcashd` uses). When Zallet is built with the `zcashd-import`
 feature it compiles and uses a vendored copy of this utility automatically, so you
@@ -55,4 +82,5 @@ copy it vendors and builds, which is the recommended choice; a `zcashd`-provided
 
 [`zcashd`]: https://github.com/zcash/zcash
 [`zallet init-wallet-encryption`]: init-wallet-encryption.md
+[`zallet export-mnemonic`]: export-mnemonic.md
 [is started]: start.md

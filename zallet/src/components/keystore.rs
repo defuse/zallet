@@ -519,6 +519,26 @@ impl KeyStore {
         .await
     }
 
+    /// Returns `true` if the keystore holds any standalone spending keys that are
+    /// not derived from a mnemonic seed — imported Sapling keys or migrated
+    /// transparent keys — and therefore cannot be recovered from an exported
+    /// mnemonic.
+    pub(crate) async fn has_standalone_keys(&self) -> Result<bool, Error> {
+        self.with_db(|conn, _| {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT
+                        EXISTS(SELECT 1 FROM ext_zallet_keystore_standalone_sapling_keys)
+                        OR EXISTS(SELECT 1 FROM ext_zallet_keystore_standalone_transparent_keys)",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| ErrorKind::Generic.context(e))?;
+            Ok(exists)
+        })
+        .await
+    }
+
     pub(crate) async fn encrypt_and_store_mnemonic(
         &self,
         mnemonic: Mnemonic,

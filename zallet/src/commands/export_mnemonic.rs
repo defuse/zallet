@@ -45,6 +45,27 @@ impl AsyncRunnable for ExportMnemonicCmd {
             .await
             .map_err(|e| ErrorKind::Generic.context(e))?;
 
+        // The exported mnemonic only backs up funds derived from this seed. If the
+        // wallet also holds spend authority that no mnemonic can regenerate
+        // (imported Sapling keys, migrated transparent keys, or legacy seeds),
+        // warn that this is not a complete backup. The warning goes to stderr so
+        // it does not corrupt the mnemonic written to stdout (which is typically
+        // redirected to a file).
+        let has_legacy_seeds = !keystore.list_legacy_seed_fingerprints().await?.is_empty();
+        let has_standalone_keys = keystore.has_standalone_keys().await?;
+        if has_legacy_seeds || has_standalone_keys {
+            eprintln!();
+            eprintln!("WARNING: this mnemonic is NOT a complete backup of your wallet.");
+            eprintln!("This wallet also holds spending keys that CANNOT be recovered from any");
+            eprintln!("mnemonic (imported Sapling keys, migrated transparent keys, and/or legacy");
+            eprintln!("seeds). To back those up you must ALSO keep a secure copy of BOTH:");
+            eprintln!("  - your Zallet wallet database (wallet.db in your datadir), and");
+            eprintln!("  - the age encryption identity file (the file named by the");
+            eprintln!("    keystore.encryption_identity config option); wallet.db is encrypted");
+            eprintln!("    to it and cannot be decrypted without it.");
+            eprintln!("There is currently no backup RPC or command for this key material.");
+        }
+
         Ok(())
     }
 }
