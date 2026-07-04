@@ -7,6 +7,38 @@ wallet (`wallet.db`).
 
 [`zallet init-wallet-encryption`] must be run before this command.
 
+> ## ⚠️ Keep a secure backup of your original `wallet.dat`
+>
+> This migration is **alpha** software and does **not** import every kind of key. If it
+> would drop any **spend authority** — Sprout spending keys, legacy `wkey` transparent
+> keys, standalone transparent keys with an uncompressed public key, P2SH redeem scripts it
+> cannot import, or the encrypted key records (`ckey`, `csapzkey`, `czkey`, …) of a
+> **passphrase-encrypted** `zcashd` wallet — it **aborts before writing anything** unless
+> you pass `--allow-lossy-migration` (see below); with that flag, the affected key material
+> is left behind. Loss of purely **watch-only** tracking (uncompressed watch-only pubkeys,
+> address-only imports, non-standard scripts) does not block the migration, since no
+> spending key is involved, but it is still reported in the summary.
+>
+> For any key that is not migrated, your original `wallet.dat` is the **only** copy — it
+> was never written to the Zallet `wallet.db`, so a backup of the Zallet wallet will not
+> protect it. **Do not delete or discard `wallet.dat` after migrating.** If you lose it,
+> any funds controlled by un-migrated keys are **permanently unrecoverable**, even if your
+> Zallet `wallet.db` is intact.
+>
+> You must **also** back up the new Zallet wallet. Its `wallet.db` holds spending keys that
+> **cannot** be recovered from any seed phrase — standalone imported keys, legacy seeds,
+> and migrated transparent keys — so [`zallet export-mnemonic`] is **not** a complete
+> backup. There is currently no backup RPC or command; to back up the Zallet wallet, make a
+> secure copy of **both** the `wallet.db` file *and* the age encryption identity file (the
+> file named by the `keystore.encryption_identity` config option). `wallet.db` is encrypted
+> to that identity and cannot be decrypted without it (plus its passphrase, if the identity
+> is passphrase-encrypted). Losing either file means losing access to every key held only
+> in the Zallet wallet.
+>
+> At the end of a run, Zallet prints a summary of exactly what was imported, skipped, or
+> could not be migrated. Review it, and keep `wallet.dat` until Zallet is stable and you
+> have confirmed every balance is spendable.
+
 Parsing a `zcashd` wallet file requires the `db_dump` utility built for Berkeley DB
 version 6.2 (the version `zcashd` uses). When Zallet is built with the `zcashd-import`
 feature it compiles and uses a vendored copy of this utility automatically, so you
@@ -40,6 +72,15 @@ Additional CLI arguments:
 - `--allow-warnings`: If set, Zallet will ignore errors in parsing transactions
   extracted from the `wallet.dat` file. This can enable the import of key data
   from wallets that have been used on consensus forks of the Zcash chain.
+- `--allow-lossy-migration`: Proceed even though the migration will silently drop
+  spend authority that Zallet cannot yet import — Sprout spending keys, legacy
+  `wkey` transparent keys, standalone transparent keys with an uncompressed public
+  key, P2SH redeem scripts it cannot import (only multisig scripts within the P2SH
+  size limit are supported), and the encrypted key records (`ckey`, `csapzkey`,
+  `czkey`, …) of a passphrase-encrypted `zcashd` wallet. Without this flag,
+  migration aborts before writing anything if any such key material is present.
+  The dropped keys remain only in the original `wallet.dat`, which you must keep
+  in order to spend the affected funds.
 
 > For the Zallet alpha releases, the command also currently takes another required flag
 > `--this-is-alpha-code-and-you-will-need-to-redo-the-migration-later`.
@@ -55,4 +96,5 @@ copy it vendors and builds, which is the recommended choice; a `zcashd`-provided
 
 [`zcashd`]: https://github.com/zcash/zcash
 [`zallet init-wallet-encryption`]: init-wallet-encryption.md
+[`zallet export-mnemonic`]: export-mnemonic.md
 [is started]: start.md

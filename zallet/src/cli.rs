@@ -208,6 +208,16 @@ pub(crate) struct MigrateZcashdWalletCmd {
     #[arg(long)]
     pub(crate) no_scan: bool,
 
+    /// Allow the migration to complete even though it will silently drop spend authority
+    /// that Zallet cannot yet import: Sprout spending keys, legacy `wkey` transparent keys,
+    /// standalone transparent keys with an uncompressed public key, P2SH redeem scripts it
+    /// cannot import, and the encrypted key records (`ckey`, `csapzkey`, `czkey`, ...) of an
+    /// encrypted `zcashd` wallet. Without this flag, migration aborts before writing
+    /// anything if any such key material is present. The dropped keys remain only in the
+    /// original `wallet.dat`, which you must keep in order to spend the affected funds.
+    #[arg(long)]
+    pub(crate) allow_lossy_migration: bool,
+
     /// Temporary flag ensuring any alpha users are aware the migration is not stable.
     #[arg(long)]
     pub(crate) this_is_alpha_code_and_you_will_need_to_redo_the_migration_later: bool,
