@@ -24,7 +24,7 @@ use zcash_keys::keys::{
 };
 use zcash_primitives::{block::BlockHash, transaction::Transaction};
 use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType, NetworkUpgrade, Parameters};
-use zcash_script::script::{Code, Redeem};
+use zcash_script::script::{Code, Evaluable, Redeem};
 use zewif_zcashd::{
     BDBDump, DBKey, ZcashdDump, ZcashdParser, ZcashdWallet,
     zcashd_wallet::transparent::WatchScriptKind,
@@ -87,6 +87,7 @@ impl AsyncRunnable for MigrateZcashdWalletCmd {
             self.buffer_wallet_transactions,
             self.allow_multiple_wallet_imports,
             self.no_scan,
+            self.allow_lossy_migration,
         )
         .await?;
 
@@ -197,6 +198,7 @@ impl MigrateZcashdWalletCmd {
         buffer_wallet_transactions: bool,
         allow_multiple_wallet_imports: bool,
         no_scan: bool,
+        allow_lossy_migration: bool,
     ) -> Result<(), MigrateError> {
         let mut db_data = db.handle().await?;
         let network_params = *db_data.params();
@@ -314,6 +316,31 @@ impl MigrateZcashdWalletCmd {
                 "Skipped {} watch-only redeem scripts that failed to parse in total.",
                 skipped_unparseable_scripts,
             );
+        }
+
+        // Fail closed *before writing anything* if the wallet contains spend authority that
+        // this tool cannot import and would otherwise silently drop. These keys exist only
+        // in the original wallet.dat and cannot be recovered from the migrated wallet, so
+        // refuse the migration unless the operator explicitly opts into a lossy import.
+        let lossy_reasons = lossy_migration_reasons(&wallet, &unparsed_keys);
+        if !lossy_reasons.is_empty() {
+            if allow_lossy_migration {
+                warn!(
+                    "Proceeding with a lossy migration (--allow-lossy-migration): {} class(es) \
+                     of spend authority will not be imported and will remain only in the \
+                     original wallet.dat.",
+                    lossy_reasons.len(),
+                );
+            } else {
+                let reasons = lossy_reasons
+                    .iter()
+                    .map(|r| format!("  - {r}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return Err(ErrorKind::Generic
+                    .context(fl!("err-migrate-wallet-lossy-blocked", reasons = reasons))
+                    .into());
+            }
         }
 
         let existing_zcash_sourced_accounts = db_data.get_account_ids()?.into_iter().try_fold(
@@ -1088,6 +1115,97 @@ fn dropped_spend_authority_label(keyname: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns `true` if Zallet can import this zcashd `cscript` redeem script without loss.
+///
+/// This mirrors the acceptance check in
+/// `zcash_client_sqlite::wallet::import_standalone_transparent_script` (a multisig redeem
+/// script within the P2SH size limit) by calling the same canonical
+/// `zcash_script::solver`. It is kept in sync manually: if that import path starts
+/// accepting more script kinds, widen this too or the pre-flight gate will over-report.
+fn redeem_script_is_importable(script_bytes: &[u8]) -> bool {
+    const MAX_P2SH_REDEEM_SCRIPT_SIZE: usize = 520;
+    match Redeem::parse(&Code(script_bytes.to_vec())) {
+        Ok(redeem) => {
+            redeem.to_bytes().len() <= MAX_P2SH_REDEEM_SCRIPT_SIZE
+                && matches!(
+                    zcash_script::solver::standard(&redeem),
+                    Some(zcash_script::solver::ScriptKind::MultiSig { .. })
+                )
+        }
+        Err(_) => false,
+    }
+}
+
+/// Returns a human-readable reason for each class of **spend authority** present in the
+/// zcashd wallet that `migrate-zcashd-wallet` cannot import and would otherwise silently
+/// drop. An empty result means the migration does not drop any such spend authority.
+///
+/// This intentionally covers only spend authority. Pure watch-only material (uncompressed
+/// watch-only pubkeys, address-only entries, non-standard scripts) carries no spending
+/// key, so dropping it cannot lose funds the operator controls; those are surfaced in the
+/// summary as warnings instead of blocking the migration.
+fn lossy_migration_reasons(wallet: &ZcashdWallet, unparsed_keys: &HashSet<DBKey>) -> Vec<String> {
+    let mut reasons = Vec::new();
+
+    let sprout_keys = wallet.sprout_keys().map_or(0, |k| k.keypairs().count());
+    if sprout_keys > 0 {
+        reasons.push(format!(
+            "{sprout_keys} Sprout spending key(s) (Zallet does not support Sprout)"
+        ));
+    }
+
+    let wkey_keys = wallet.wallet_keys().map_or(0, |k| k.keypairs().count());
+    if wkey_keys > 0 {
+        reasons.push(format!(
+            "{wkey_keys} legacy `wkey` transparent spending key(s)"
+        ));
+    }
+
+    // Standalone transparent spending keys whose public key is uncompressed: Zallet would
+    // re-derive and track the compressed-form address, which is a different t-address, so
+    // the original funds would be invisible and unspendable.
+    let uncompressed_spendable = wallet
+        .keys()
+        .keypairs()
+        .filter(|k| !k.pubkey().is_compressed())
+        .count();
+    if uncompressed_spendable > 0 {
+        reasons.push(format!(
+            "{uncompressed_spendable} transparent spending key(s) with an uncompressed \
+             public key (Zallet would track these under a different address)"
+        ));
+    }
+
+    // P2SH redeem scripts (`cscript`) that Zallet cannot import losslessly. zcashd can hold
+    // these as spend authority for P2SH funds; the redeem script is not derivable from the
+    // P2SH address or from the keys, so dropping it can make P2SH funds unspendable.
+    let unimportable_scripts = wallet
+        .cscripts()
+        .values()
+        .filter(|s| !redeem_script_is_importable(s.as_ref()))
+        .count();
+    if unimportable_scripts > 0 {
+        reasons.push(format!(
+            "{unimportable_scripts} P2SH redeem script(s) that Zallet cannot import (only \
+             multisig redeem scripts within the P2SH size limit are supported)"
+        ));
+    }
+
+    // Encrypted key records from a passphrase-encrypted zcashd wallet that the parser
+    // cannot interpret, aggregated by record type.
+    let mut encrypted: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for key in unparsed_keys {
+        if let Some(label) = dropped_spend_authority_label(&key.keyname) {
+            *encrypted.entry(label).or_default() += 1;
+        }
+    }
+    for (label, count) in encrypted {
+        reasons.push(format!("{count} {label}"));
+    }
+
+    reasons
+}
+
 impl MigrationSummary {
     fn any_dropped_spend_authority(&self) -> bool {
         self.dropped_sprout_keys > 0
@@ -1560,5 +1678,20 @@ mod tests {
         let mut summary = empty_summary();
         summary.unparsed_records.insert("destdata".to_string(), 5);
         assert!(!summary.any_dropped_spend_authority());
+    }
+
+    #[test]
+    fn oversized_or_unsupported_redeem_scripts_are_not_importable() {
+        // Exceeds the 520-byte P2SH redeem-script limit.
+        assert!(!redeem_script_is_importable(&[0x00; 600]));
+        // Empty / not a supported (multisig) script kind.
+        assert!(!redeem_script_is_importable(&[]));
+        // A bare P2PKH-style redeem script is standard but not multisig, so it is not
+        // importable by the standalone-script path and must count as lossy.
+        // OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+        let mut p2pkh = vec![0x76, 0xa9, 0x14];
+        p2pkh.extend_from_slice(&[0x11; 20]);
+        p2pkh.extend_from_slice(&[0x88, 0xac]);
+        assert!(!redeem_script_is_importable(&p2pkh));
     }
 }

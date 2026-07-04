@@ -23,6 +23,7 @@
 -allow-alpha-example = --this-is-alpha-code-and-you-will-need-to-recreate-the-example-later
 -allow-alpha-migration = --this-is-alpha-code-and-you-will-need-to-redo-the-migration-later
 -allow-multiple-wallet-imports = --allow-multiple-wallet-imports
+-allow-lossy-migration = --allow-lossy-migration
 -datadir = --datadir
 -db_dump = db_dump
 -zcashd-install-dir = --zcashd-install-dir
@@ -197,6 +198,15 @@ err-migrate-wallet-multi-import-disabled =
 err-migrate-wallet-duplicate-import =
     The {-zcashd} wallet containing seed with fingerprint '{$seed_fp}' has
     already been imported.
+err-migrate-wallet-lossy-blocked =
+    Migration aborted before writing anything: your {-zcashd} wallet contains
+    spend authority that {-zallet} cannot yet import, and completing the
+    migration would silently drop it:
+    {$reasons}
+    These keys exist only in your original wallet.dat and cannot be recovered
+    from the migrated wallet. Move the affected funds out using {-zcashd} first,
+    or re-run with '{-allow-lossy-migration}' to migrate anyway and keep relying
+    on your original wallet.dat to spend the dropped keys.
 err-migrate-wallet-bdb-parse =
     An error occurred in parsing the {-zcashd} wallet file at '{$path}': '{$err}'
 err-migrate-wallet-db-dump-not-found =

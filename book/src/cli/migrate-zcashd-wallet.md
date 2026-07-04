@@ -9,10 +9,15 @@ wallet (`wallet.db`).
 
 > ## ⚠️ Keep a secure backup of your original `wallet.dat`
 >
-> This migration is **alpha** software and does **not** import every kind of key. In
-> particular, it currently does not migrate Sprout spending keys, legacy `wkey`
-> transparent keys, or the encrypted key records (`ckey`, `csapzkey`, `czkey`, …) that a
-> **passphrase-encrypted** `zcashd` wallet stores. Any such key material is left behind.
+> This migration is **alpha** software and does **not** import every kind of key. If it
+> would drop any **spend authority** — Sprout spending keys, legacy `wkey` transparent
+> keys, standalone transparent keys with an uncompressed public key, P2SH redeem scripts it
+> cannot import, or the encrypted key records (`ckey`, `csapzkey`, `czkey`, …) of a
+> **passphrase-encrypted** `zcashd` wallet — it **aborts before writing anything** unless
+> you pass `--allow-lossy-migration` (see below); with that flag, the affected key material
+> is left behind. Loss of purely **watch-only** tracking (uncompressed watch-only pubkeys,
+> address-only imports, non-standard scripts) does not block the migration, since no
+> spending key is involved, but it is still reported in the summary.
 >
 > For any key that is not migrated, your original `wallet.dat` is the **only** copy — it
 > was never written to the Zallet `wallet.db`, so a backup of the Zallet wallet will not
@@ -67,6 +72,15 @@ Additional CLI arguments:
 - `--allow-warnings`: If set, Zallet will ignore errors in parsing transactions
   extracted from the `wallet.dat` file. This can enable the import of key data
   from wallets that have been used on consensus forks of the Zcash chain.
+- `--allow-lossy-migration`: Proceed even though the migration will silently drop
+  spend authority that Zallet cannot yet import — Sprout spending keys, legacy
+  `wkey` transparent keys, standalone transparent keys with an uncompressed public
+  key, P2SH redeem scripts it cannot import (only multisig scripts within the P2SH
+  size limit are supported), and the encrypted key records (`ckey`, `csapzkey`,
+  `czkey`, …) of a passphrase-encrypted `zcashd` wallet. Without this flag,
+  migration aborts before writing anything if any such key material is present.
+  The dropped keys remain only in the original `wallet.dat`, which you must keep
+  in order to spend the affected funds.
 
 > For the Zallet alpha releases, the command also currently takes another required flag
 > `--this-is-alpha-code-and-you-will-need-to-redo-the-migration-later`.
